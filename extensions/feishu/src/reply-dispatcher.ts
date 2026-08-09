@@ -208,6 +208,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const prefixContext = createReplyPrefixContext({ cfg, agentId });
 
   let typingState: TypingIndicatorState | null = null;
+  let typingStartPromise: Promise<void> | null = null;
   const { typingCallbacks } = createChannelMessageReplyPipeline({
     cfg,
     agentId,
@@ -237,14 +238,31 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         if (typingState?.reactionId) {
           return;
         }
-        typingState = await addTypingIndicator({
-          cfg,
-          messageId: typingTargetMessageId,
-          accountId,
-          runtime: params.runtime,
-        });
+        if (typingStartPromise) {
+          await typingStartPromise;
+          return;
+        }
+        const startPromise = (async () => {
+          typingState = await addTypingIndicator({
+            cfg,
+            messageId: typingTargetMessageId,
+            accountId,
+            runtime: params.runtime,
+          });
+        })();
+        typingStartPromise = startPromise;
+        try {
+          await startPromise;
+        } finally {
+          if (typingStartPromise === startPromise) {
+            typingStartPromise = null;
+          }
+        }
       },
       stop: async () => {
+        if (typingStartPromise) {
+          await typingStartPromise;
+        }
         if (!typingState) {
           return;
         }
@@ -1517,6 +1535,14 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   return {
     dispatcherOptions,
     delivery,
+    // The inbound handler starts typing before core dispatch so users receive
+    // immediate feedback while the agent turn is still being prepared.
+    beginTurnTyping: async () => {
+      await Promise.resolve(typingCallbacks?.onReplyStart?.());
+    },
+    cleanupTurnTyping: () => {
+      typingCallbacks?.onCleanup?.();
+    },
     replyOptions: {
       onModelSelected: prefixContext.onModelSelected,
       disableBlockStreaming:

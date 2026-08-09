@@ -1720,7 +1720,10 @@ export async function handleFeishuMessage(params: {
             );
           }
 
-          const turnResult = await core.channel.inbound.run({
+          if (variant.kind === "active") {
+            await variant.dispatcher.beginTurnTyping?.();
+          }
+          const turnPromise = core.channel.inbound.run({
             channel: "feishu",
             accountId: route.accountId,
             raw: ctx,
@@ -1732,6 +1735,11 @@ export async function handleFeishuMessage(params: {
               lifecycle: lane.lifecycle,
               variant,
             }),
+          });
+          const turnResult = await turnPromise.finally(() => {
+            if (variant.kind === "active") {
+              variant.dispatcher.cleanupTurnTyping?.();
+            }
           });
           if (
             variant.kind === "active" &&
@@ -1813,30 +1821,32 @@ export async function handleFeishuMessage(params: {
         storePath,
         sessionKey: route.sessionKey,
       });
+      const replyDispatcher = createFeishuReplyDispatcher({
+        cfg: effectiveCfg,
+        agentId: route.agentId,
+        runtime: runtime as RuntimeEnv,
+        chatId: ctx.chatId,
+        sendTarget: feishuReplyTarget,
+        allowReasoningPreview,
+        replyToMessageId: replyTargetMessageId,
+        typingTargetMessageId,
+        skipReplyToInMessages: !isGroup && !directThreadReply,
+        replyInThread,
+        rootId: ctx.rootId,
+        threadReply,
+        accountId: account.accountId,
+        identity,
+        mentionTargets: ctx.mentionTargets,
+        requiredMentionTargets,
+        messageCreateTimeMs,
+        sessionKey: route.sessionKey,
+      });
       const { dispatcherOptions, delivery, replyOptions, ensureNoVisibleReplyFallback } =
-        createFeishuReplyDispatcher({
-          cfg: effectiveCfg,
-          agentId: route.agentId,
-          runtime: runtime as RuntimeEnv,
-          chatId: ctx.chatId,
-          sendTarget: feishuReplyTarget,
-          allowReasoningPreview,
-          replyToMessageId: replyTargetMessageId,
-          typingTargetMessageId,
-          skipReplyToInMessages: !isGroup && !directThreadReply,
-          replyInThread,
-          rootId: ctx.rootId,
-          threadReply,
-          accountId: account.accountId,
-          identity,
-          mentionTargets: ctx.mentionTargets,
-          requiredMentionTargets,
-          messageCreateTimeMs,
-          sessionKey: route.sessionKey,
-        });
+        replyDispatcher;
 
       log(`feishu[${account.accountId}]: dispatching to agent (session=${route.sessionKey})`);
-      const turnResult = await core.channel.inbound.run({
+      await replyDispatcher.beginTurnTyping?.();
+      const turnPromise = core.channel.inbound.run({
         channel: "feishu",
         accountId: route.accountId,
         raw: ctx,
@@ -1883,6 +1893,7 @@ export async function handleFeishuMessage(params: {
           }),
         },
       });
+      const turnResult = await turnPromise.finally(() => replyDispatcher.cleanupTurnTyping?.());
       if (!turnResult.dispatched) {
         return;
       }

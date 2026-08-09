@@ -376,6 +376,33 @@ describe("broadcast dispatch", () => {
     expect(dispatcherParams?.agentId).toBe("main");
   });
 
+  it("wraps the active broadcast agent with the early typing lifecycle", async () => {
+    const beginTurnTyping = vi.fn(async () => {});
+    const cleanupTurnTyping = vi.fn();
+    mockCreateFeishuReplyDispatcher.mockReturnValueOnce({
+      dispatcherOptions: {},
+      delivery: { deliver: vi.fn(async () => undefined) },
+      replyOptions: {},
+      beginTurnTyping,
+      cleanupTurnTyping,
+      ensureNoVisibleReplyFallback: vi.fn(),
+    } as never);
+
+    await handleFeishuMessage({
+      cfg: createBroadcastConfig(),
+      event: createBroadcastEvent({
+        messageId: "msg-broadcast-early-typing",
+        text: "hello @bot",
+        botMentioned: true,
+      }),
+      botOpenId: "bot-open-id",
+      runtime: createRuntimeEnv(),
+    });
+
+    expect(beginTurnTyping).toHaveBeenCalledTimes(1);
+    expect(cleanupTurnTyping).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the observer adapter isolated from active delivery", async () => {
     const activeDeliver = vi.fn(async () => undefined);
     mockCreateFeishuReplyDispatcher.mockReturnValueOnce({

@@ -571,6 +571,62 @@ describe("handleFeishuMessage ACP routing", () => {
     expect(mockEnsureConfiguredBindingRouteReady).toHaveBeenCalledTimes(1);
   });
 
+  it("starts typing before inbound dispatch and cleans it after completion", async () => {
+    const beginTurnTyping = vi.fn(async () => {});
+    const cleanupTurnTyping = vi.fn();
+    mockCreateFeishuReplyDispatcher.mockReturnValueOnce({
+      dispatcherOptions: {},
+      delivery: { deliver: vi.fn(async () => undefined) },
+      replyOptions: {},
+      beginTurnTyping,
+      cleanupTurnTyping,
+      ensureNoVisibleReplyFallback: vi.fn(),
+    } as never);
+    const runtime = createFeishuBotRuntime();
+    setFeishuRuntime(runtime);
+
+    await dispatchMessage({
+      cfg: createFeishuTestConfig({ dmPolicy: "open" }),
+      event: createFeishuTestEvent({ messageId: "msg-early-typing" }),
+    });
+
+    const inboundRun = vi.mocked(runtime.channel.inbound.run);
+    expect(beginTurnTyping).toHaveBeenCalledTimes(1);
+    expect(cleanupTurnTyping).toHaveBeenCalledTimes(1);
+    expect(beginTurnTyping.mock.invocationCallOrder[0]).toBeLessThan(
+      inboundRun.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(cleanupTurnTyping.mock.invocationCallOrder[0]).toBeGreaterThan(
+      inboundRun.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("cleans early typing when inbound dispatch fails", async () => {
+    const beginTurnTyping = vi.fn(async () => {});
+    const cleanupTurnTyping = vi.fn();
+    mockCreateFeishuReplyDispatcher.mockReturnValueOnce({
+      dispatcherOptions: {},
+      delivery: { deliver: vi.fn(async () => undefined) },
+      replyOptions: {},
+      beginTurnTyping,
+      cleanupTurnTyping,
+      ensureNoVisibleReplyFallback: vi.fn(),
+    } as never);
+    const runtime = createFeishuBotRuntime();
+    runtime.channel.inbound.run = vi.fn(async () => {
+      throw new Error("dispatch failed");
+    }) as never;
+    setFeishuRuntime(runtime);
+
+    await dispatchMessage({
+      cfg: createFeishuTestConfig({ dmPolicy: "open" }),
+      event: createFeishuTestEvent({ messageId: "msg-early-typing-failure" }),
+    });
+
+    expect(beginTurnTyping).toHaveBeenCalledTimes(1);
+    expect(cleanupTurnTyping).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces configured ACP initialization failures to the Feishu conversation", async () => {
     mockResolveConfiguredBindingRoute.mockReturnValue(createConfiguredFeishuRoute());
     mockEnsureConfiguredBindingRouteReady.mockResolvedValue(

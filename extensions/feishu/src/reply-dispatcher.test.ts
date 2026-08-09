@@ -495,6 +495,71 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
   });
 
+  it("starts and cleans typing before the reply dispatcher receives a payload", async () => {
+    resolveFeishuAccountMock.mockReturnValue({
+      accountId: "main",
+      appId: "app_id",
+      appSecret: "app_secret",
+      domain: "feishu",
+      config: {
+        renderMode: "card",
+        streaming: { mode: "partial" },
+      },
+    });
+    const result = createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+      sendTarget: "oc_chat",
+      typingTargetMessageId: "om_inbound",
+      messageCreateTimeMs: Date.now(),
+    });
+
+    await result.beginTurnTyping();
+
+    expect(addTypingIndicatorMock).toHaveBeenCalledTimes(1);
+    expectMockArgFields(addTypingIndicatorMock, "typing indicator params", {
+      messageId: "om_inbound",
+    });
+    expect(streamingInstances).toHaveLength(0);
+
+    result.cleanupTurnTyping();
+    await vi.waitFor(() => expect(removeTypingIndicatorMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("cleans typing when dispatch finishes before the reaction is created", async () => {
+    let resolveTypingStart:
+      | ((state: { messageId: string; reactionId: string }) => void)
+      | undefined;
+    addTypingIndicatorMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveTypingStart = resolve;
+        }),
+    );
+    const result = createFeishuReplyDispatcher({
+      cfg: {} as never,
+      agentId: "agent",
+      runtime: {} as never,
+      chatId: "oc_chat",
+      sendTarget: "oc_chat",
+      typingTargetMessageId: "om_inbound",
+      messageCreateTimeMs: Date.now(),
+    });
+
+    await result.beginTurnTyping();
+    result.cleanupTurnTyping();
+    resolveTypingStart?.({ messageId: "om_inbound", reactionId: "reaction_1" });
+
+    await vi.waitFor(() => expect(removeTypingIndicatorMock).toHaveBeenCalledTimes(1));
+    expect(removeTypingIndicatorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: { messageId: "om_inbound", reactionId: "reaction_1" },
+      }),
+    );
+  });
+
   it("targets typing at the inbound message while replies stay on the thread root", async () => {
     useNonStreamingAutoAccount();
     const { options } = createDispatcherHarness({
