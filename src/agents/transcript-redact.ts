@@ -10,6 +10,8 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readLoggingConfig } from "../logging/config.js";
 import { redactSourceInputTextWithConfig } from "../logging/redact-source.js";
 import {
+  isResourceTokenFieldKey,
+  isSensitiveFieldKey,
   redactModelVisibleSensitiveFieldValueWithConfig,
   redactModelVisibleToolPayloadTextWithConfig,
   redactSensitiveFieldValueWithConfig,
@@ -55,7 +57,20 @@ function redactTranscriptStructuredFieldValue(
   value: string,
   cfg?: OpenClawConfig,
   modelVisibleToolResult = false,
+  sensitiveAncestorKey?: string,
 ): string {
+  // Resource references must remain usable on replay. Keep the stricter diagnostic
+  // value policy here so registered secrets and configured credential patterns still apply.
+  if (isResourceTokenFieldKey(key)) {
+    if (sensitiveAncestorKey) {
+      return redactSensitiveFieldValueWithConfig(
+        sensitiveAncestorKey,
+        value,
+        resolveTranscriptLoggingConfig(cfg),
+      );
+    }
+    return redactTranscriptText(value, cfg);
+  }
   // Preserve pagination state only in transcripts; value-pattern and global log redaction remain.
   return /^(?:next[_-]?)?page[_-]?token$|^page[_-]?cursor$/i.test(key)
     ? redactTranscriptText(value, cfg, modelVisibleToolResult)
@@ -495,10 +510,17 @@ function redactTranscriptStructuredValue(
   modelVisibleToolResult = false,
   sourceFields?: ReadonlyMap<string, string>,
   sourceSlots?: ReadonlyMap<object, ReadonlyMap<string, string>>,
+  sensitiveAncestorKey?: string,
 ): unknown {
   if (typeof value === "string") {
     if (fieldKey) {
-      return redactTranscriptStructuredFieldValue(fieldKey, value, cfg, modelVisibleToolResult);
+      return redactTranscriptStructuredFieldValue(
+        fieldKey,
+        value,
+        cfg,
+        modelVisibleToolResult,
+        sensitiveAncestorKey,
+      );
     }
     return redactTranscriptText(value, cfg, modelVisibleToolResult);
   }
@@ -520,6 +542,7 @@ function redactTranscriptStructuredValue(
         modelVisibleToolResult,
         undefined,
         sourceSlots,
+        sensitiveAncestorKey,
       );
       changed ||= next !== item;
       return next;
@@ -540,6 +563,11 @@ function redactTranscriptStructuredValue(
     // of cloning unexpected prototypes into transcripts.
     return value;
   }
+
+  // Arrays retain their field key, so credential ownership also reaches object
+  // entries inside arrays. A resource leaf cannot reinterpret a sensitive parent.
+  const childSensitiveKey =
+    sensitiveAncestorKey ?? (fieldKey && isSensitiveFieldKey(fieldKey) ? fieldKey : undefined);
 
   seen.add(value);
   const sanitizedImageRecord = sanitizeTranscriptImageRecord(value);
@@ -705,6 +733,7 @@ function redactTranscriptStructuredValue(
               ? sourceSlots?.get(source)
               : undefined,
             sourceSlots,
+            childSensitiveKey,
           );
     if (redacted === item) {
       continue;
