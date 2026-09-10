@@ -472,6 +472,9 @@ function redactTranscriptStructuredValue(
     }
     return redactTranscriptText(value, cfg, modelVisibleToolResult);
   }
+  // Non-string sensitive fields own their descendants, including array elements.
+  const childSensitiveKey =
+    sensitiveAncestorKey ?? (fieldKey && isSensitiveFieldKey(fieldKey) ? fieldKey : undefined);
   if (Array.isArray(value)) {
     if (seen.has(value)) {
       return "[Circular]";
@@ -490,7 +493,7 @@ function redactTranscriptStructuredValue(
         modelVisibleToolResult,
         undefined,
         sourceSlots,
-        sensitiveAncestorKey,
+        childSensitiveKey,
       );
       changed ||= next !== item;
       return next;
@@ -511,11 +514,6 @@ function redactTranscriptStructuredValue(
     // of cloning unexpected prototypes into transcripts.
     return value;
   }
-
-  // Arrays retain their field key, so credential ownership also reaches object
-  // entries inside arrays. A resource leaf cannot reinterpret a sensitive parent.
-  const childSensitiveKey =
-    sensitiveAncestorKey ?? (fieldKey && isSensitiveFieldKey(fieldKey) ? fieldKey : undefined);
 
   seen.add(value);
   const sanitizedImageRecord = sanitizeTranscriptImageRecord(value);

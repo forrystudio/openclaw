@@ -958,6 +958,7 @@ function redactSensitiveFieldValueWithOptions(
   options: RedactOptions,
   path: readonly string[] = [key],
   objectPath = true,
+  directFieldValue = true,
 ): string {
   const exactRedacted = redactRegisteredSecretValues(value, maskToken);
   if (isPublicShareIdPath(path)) {
@@ -1014,6 +1015,7 @@ function redactSensitiveFieldValueWithOptions(
     sensitiveKey &&
     !(
       options.preserveResourceIdentifiers &&
+      directFieldValue &&
       isResourceTokenFieldKey(key) &&
       !path.slice(0, -1).some(isSensitiveFieldKey)
     )
@@ -1050,11 +1052,16 @@ export function redactModelVisibleSensitiveFieldValueWithConfig(
   key: string,
   value: string,
   loggingConfig?: LoggingConfig,
+  path?: readonly string[],
+  directFieldValue = true,
 ): string {
   return redactSensitiveFieldValueWithOptions(
     key,
     value,
     resolveModelVisibleToolPayloadRedaction(loggingConfig),
+    path,
+    true,
+    directFieldValue,
   );
 }
 
@@ -1079,9 +1086,17 @@ function redactStructuredSecretValue(
   options: RedactOptions,
   path: readonly string[] = key ? [key] : [],
   objectPath = true,
+  directFieldValue = true,
 ): unknown {
   if (typeof value === "string") {
-    return redactSensitiveFieldValueWithOptions(key, value, options, path, objectPath);
+    return redactSensitiveFieldValueWithOptions(
+      key,
+      value,
+      options,
+      path,
+      objectPath,
+      directFieldValue,
+    );
   }
   if (value === null || value === undefined) {
     return value;
@@ -1095,7 +1110,7 @@ function redactStructuredSecretValue(
     }
     seen.add(value);
     const out = value.map((entry) =>
-      redactStructuredSecretValue(key, entry, seen, options, path, false),
+      redactStructuredSecretValue(key, entry, seen, options, path, false, false),
     );
     seen.delete(value);
     return out;

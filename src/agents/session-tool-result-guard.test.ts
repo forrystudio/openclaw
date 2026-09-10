@@ -719,6 +719,43 @@ describe("installSessionToolResultGuard", () => {
     }
   });
 
+  it.each([
+    {
+      label: "object",
+      value: { value: "SyntheticOpaqueCredential1234567890" },
+      expected: { value: expect.not.stringContaining("SyntheticOpaqueCredential1234567890") },
+    },
+    {
+      label: "array",
+      value: ["SyntheticOpaqueCredential1234567890"],
+      expected: [expect.not.stringContaining("SyntheticOpaqueCredential1234567890")],
+    },
+    { label: "number", value: 123456, expected: "***" },
+    { label: "boolean", value: true, expected: "***" },
+  ])(
+    "keeps resource-shaped $label details under the sensitive-field policy",
+    ({ value, expected }) => {
+      const sm = SessionManager.inMemory();
+      installSessionToolResultGuard(sm, {
+        transformMessageForPersistence: (message) => redactTranscriptMessage(message, {}),
+      });
+      sm.appendMessage(toolCallMessage);
+      sm.appendMessage(
+        asAppendMessage({
+          role: "toolResult",
+          toolCallId: "call_1",
+          toolName: "read",
+          content: [{ type: "text", text: "Lookup complete." }],
+          details: { doc_token: value },
+          isError: false,
+          timestamp: Date.now(),
+        }),
+      );
+      const result = getPersistedMessages(sm).find((message) => message.role === "toolResult");
+      expect(result).toMatchObject({ details: { doc_token: expected } });
+    },
+  );
+
   it("preserves correlation IDs while backfilling names through redaction", () => {
     const sm = SessionManager.inMemory();
     const guard = installSessionToolResultGuard(sm, {

@@ -389,6 +389,11 @@ describe("redactTranscriptMessage", () => {
       expect(result.access_token).not.toBe(fields.access_token);
     });
 
+    it("keeps resource-keyed arrays sensitive", () => {
+      const result = redactFields({ doc_token: [identifier, [identifier]] });
+      expect(JSON.stringify(result)).not.toContain(identifier);
+    });
+
     it("keeps non-resource names and credential fields masked", () => {
       const keys = [
         "DOC_TOKEN",

@@ -24,6 +24,11 @@ describe.each(resourceKeys)("model-visible resource identifier %s", (key) => {
     expect(redactModelVisibleSensitiveFieldValueWithConfig(key, identifier, {})).toBe(identifier);
   });
 
+  it("keeps resource-keyed arrays sensitive", () => {
+    const result = redactModelVisibleSecrets({ [key]: [identifier, [identifier]] });
+    expect(JSON.stringify(result)).not.toContain(identifier);
+  });
+
   it("still masks a registered secret under a resource field", () => {
     registerSecretValueForRedaction(identifier);
     expect(redactModelVisibleSecrets({ [key]: identifier })[key]).not.toContain(identifier);
