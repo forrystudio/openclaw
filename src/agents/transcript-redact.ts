@@ -7,17 +7,8 @@ import { OPENAI_RESPONSES_APIS } from "@openclaw/ai/internal/openai-responses-pa
 import { findNormalizedProviderValue } from "@openclaw/model-catalog-core/provider-id";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { readLoggingConfig } from "../logging/config.js";
 import { redactSourceInputTextWithConfig } from "../logging/redact-source.js";
-import {
-  isResourceTokenFieldKey,
-  isSensitiveFieldKey,
-  redactModelVisibleSensitiveFieldValueWithConfig,
-  redactModelVisibleToolPayloadTextWithConfig,
-  redactSensitiveFieldValueWithConfig,
-  redactSensitiveText,
-  redactToolPayloadTextWithConfig,
-} from "../logging/redact.js";
+import { isSensitiveFieldKey, redactSensitiveText } from "../logging/redact.js";
 import { readNestedToolActivity } from "../sessions/nested-tool-activity.js";
 import type { ProviderEndpointClass } from "./provider-attribution.js";
 import { resolveProviderEndpoint } from "./provider-attribution.js";
@@ -28,60 +19,17 @@ import {
   type CodeModeSourceAppend,
 } from "./transcript-code-mode-source.js";
 import {
+  redactTranscriptStructuredFieldValue,
+  redactTranscriptText,
+  resolveTranscriptLoggingConfig,
+} from "./transcript-redact-fields.js";
+import {
   sanitizeTranscriptImageDataUrlField,
   sanitizeTranscriptImageRecord,
   shouldPreserveNestedTranscriptImageDataUrlFields,
   shouldPreserveTranscriptImagePayload,
 } from "./transcript-redact-images.js";
 import { sanitizeCompactionReplayState } from "./transcript-redact-replay.js";
-
-function resolveTranscriptLoggingConfig(cfg?: OpenClawConfig) {
-  const configuredLogging = readLoggingConfig();
-  const redactPatterns = cfg?.logging?.redactPatterns ?? configuredLogging?.redactPatterns;
-  return redactPatterns ? { redactPatterns } : undefined;
-}
-
-function redactTranscriptText(
-  value: string,
-  cfg?: OpenClawConfig,
-  modelVisibleToolResult = false,
-): string {
-  const loggingConfig = resolveTranscriptLoggingConfig(cfg);
-  return modelVisibleToolResult
-    ? redactModelVisibleToolPayloadTextWithConfig(value, loggingConfig)
-    : redactToolPayloadTextWithConfig(value, loggingConfig);
-}
-
-function redactTranscriptStructuredFieldValue(
-  key: string,
-  value: string,
-  cfg?: OpenClawConfig,
-  modelVisibleToolResult = false,
-  sensitiveAncestorKey?: string,
-): string {
-  // Resource references must remain usable on replay. Keep the stricter diagnostic
-  // value policy here so registered secrets and configured credential patterns still apply.
-  if (isResourceTokenFieldKey(key)) {
-    if (sensitiveAncestorKey) {
-      return redactSensitiveFieldValueWithConfig(
-        sensitiveAncestorKey,
-        value,
-        resolveTranscriptLoggingConfig(cfg),
-      );
-    }
-    return redactTranscriptText(value, cfg);
-  }
-  // Preserve pagination state only in transcripts; value-pattern and global log redaction remain.
-  return /^(?:next[_-]?)?page[_-]?token$|^page[_-]?cursor$/i.test(key)
-    ? redactTranscriptText(value, cfg, modelVisibleToolResult)
-    : modelVisibleToolResult
-      ? redactModelVisibleSensitiveFieldValueWithConfig(
-          key,
-          value,
-          resolveTranscriptLoggingConfig(cfg),
-        )
-      : redactSensitiveFieldValueWithConfig(key, value, resolveTranscriptLoggingConfig(cfg));
-}
 
 function isPlainTranscriptObject(value: object): value is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(value);
