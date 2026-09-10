@@ -36,3 +36,9 @@ describe("simple stream max-token clamp", () => {
     expect(buildBaseOptions(makeModel()).maxTokens).toBeUndefined();
   });
 });
+
+it("preserves the body-preview opt-in through simple stream normalization", () => {
+  expect(buildBaseOptions(makeModel(), { bodyPreview: true }).bodyPreview).toBe(true);
+  expect(buildBaseOptions(makeModel(), { bodyPreview: false }).bodyPreview).toBe(false);
+  expect(buildBaseOptions(makeModel()).bodyPreview).toBeUndefined();
+});

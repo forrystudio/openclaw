@@ -318,6 +318,7 @@ export function prepareEmbeddedAttemptStream(input: {
     blockReplyBreak: attempt.blockReplyBreak,
     blockReplyChunking: attempt.blockReplyChunking,
     onPartialReply: attempt.onPartialReply,
+    bodyPreview: attempt.bodyPreview,
     onAssistantMessageStart: attempt.onAssistantMessageStart,
     onExecutionPhase: attempt.onExecutionPhase,
     onAgentEvent: attempt.onAgentEvent,
