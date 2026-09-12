@@ -1,5 +1,4 @@
 // Defines Zod schema fragments for per-agent runtime configuration.
-import { parseProviderModelRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { isRecord as isPlainRecord } from "@openclaw/normalization-core/record-coerce";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { z } from "zod";
@@ -13,7 +12,8 @@ import {
 import { isBlockedObjectKey } from "../infra/prototype-keys.js";
 import { MANAGED_GITHUB_PROFILE_ID_PATTERN } from "./github-identity-profile-id.js";
 import { LEGACY_WEB_SEARCH_PROVIDER_CONFIG_KEYS } from "./web-search-legacy-provider-keys.js";
-import { AgentModelSchema, AgentToolModelSchema } from "./zod-schema.agent-model.js";
+import { AgentEntryBaseSchema } from "./zod-schema.agent-entry-base.js";
+import { AgentModelSchema } from "./zod-schema.agent-model.js";
 import {
   GroupChatSchema,
   HumanDelaySchema,
@@ -25,18 +25,13 @@ import {
   TypingModeSchema,
   TtsConfigSchema,
 } from "./zod-schema.core.js";
+import { MemorySearchSchema } from "./zod-schema.memory-search.js";
 import {
   SandboxBrowserSchema,
   SandboxDockerSchema,
   SandboxPruneSchema,
 } from "./zod-schema.sandbox.js";
 import { sensitive } from "./zod-schema.sensitive.js";
-
-const AgentEntryEmbeddedAgentConfigSchema = z
-  .object({
-    executionContract: z.union([z.literal("default"), z.literal("strict-agentic")]).optional(),
-  })
-  .strict();
 
 const AgentTtsConfigSchema = TtsConfigSchema.unwrap()
   .extend({ prefsPath: z.string().optional() })
@@ -620,221 +615,24 @@ const AgentToolsSchema = z
   })
   .optional();
 
-export const MemorySearchSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    rememberAcrossConversations: z.boolean().optional(),
-    sources: z.array(z.union([z.literal("memory"), z.literal("sessions")])).optional(),
-    extraPaths: z
-      .array(
-        z.union([
-          z.string(),
-          z.object({ path: z.string(), pattern: z.string().optional() }).strict(),
-        ]),
-      )
-      .optional(),
-    multimodal: z
-      .object({
-        enabled: z.boolean().optional(),
-        modalities: z
-          .array(z.union([z.literal("image"), z.literal("audio"), z.literal("all")]))
-          .optional(),
-        maxFileBytes: z.number().int().positive().optional(),
-      })
-      .strict()
-      .optional(),
-    experimental: z.object({ sessionMemory: z.boolean().optional() }).strict().optional(),
-    provider: z.string().optional(),
-    remote: z
-      .object({
-        baseUrl: z.string().optional(),
-        apiKey: SecretInputSchema.optional().register(sensitive),
-        headers: z.record(z.string(), z.string()).optional(),
-        batch: z
-          .object({
-            enabled: z.boolean().optional(),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .optional(),
-    fallback: z.string().optional(),
-    model: z.string().optional(),
-    inputType: z.string().min(1).optional(),
-    queryInputType: z.string().min(1).optional(),
-    documentInputType: z.string().min(1).optional(),
-    outputDimensionality: z.number().int().positive().optional(),
-    local: z
-      .object({
-        modelPath: z.string().optional(),
-      })
-      .strict()
-      .optional(),
-    store: z
-      .object({
-        fts: z
-          .object({
-            tokenizer: z.union([z.literal("unicode61"), z.literal("trigram")]).optional(),
-          })
-          .strict()
-          .optional(),
-        vector: z
-          .object({
-            enabled: z.boolean().optional(),
-            extensionPath: z.string().optional(),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .optional(),
-    query: z
-      .object({
-        maxResults: z.number().int().positive().optional(),
-        minScore: z.number().min(0).max(1).optional(),
-      })
-      .strict()
-      .optional(),
-    cache: z
-      .object({
-        enabled: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict()
-  .optional();
-export { AgentModelSchema, AgentToolModelSchema };
-
-const AgentRuntimeAcpSchema = z
-  .object({
-    agent: z.string().optional(),
-    backend: z.string().optional(),
-    mode: z.enum(["persistent", "oneshot"]).optional(),
-    cwd: z.string().optional(),
-  })
-  .strict()
-  .optional();
-
-const AgentRuntimeSchema = z
-  .union([
-    z
-      .object({
-        type: z.literal("embedded"),
-      })
-      .strict(),
-    z
-      .object({
-        type: z.literal("acp"),
-        acp: AgentRuntimeAcpSchema,
-      })
-      .strict(),
-  ])
-  .optional();
-
-const AgentRuntimePolicySchema = z
-  .object({
-    id: z.string().optional(),
-  })
-  .strict()
-  .optional();
-
-const AgentModelRuntimeEntrySchema = z
-  .object({
-    alias: z.string().optional(),
-    params: z.record(z.string(), z.unknown()).optional(),
-    agentRuntime: AgentRuntimePolicySchema,
-    codeMode: z.boolean().optional(),
-    streaming: z.boolean().optional(),
-  })
-  .strict();
-
-export const AgentModelMapSchema = z
-  .record(z.string(), AgentModelRuntimeEntrySchema)
-  .superRefine((models, ctx) => {
-    for (const [ref, entry] of Object.entries(models)) {
-      // Runtime policy supports wildcard rows; Code Mode resolves exact models.
-      // Reject an authored override that would otherwise be silently ignored.
-      if (entry.codeMode !== undefined && (ref.includes("*") || !parseProviderModelRef(ref))) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [ref, "codeMode"],
-          message:
-            "Code Mode requires an exact provider/model entry; wildcard and bare model keys are not supported.",
-        });
-      }
-    }
-  });
-
-export const AgentModelPolicySchema = z
-  .object({
-    allow: z.array(z.string()).optional(),
-  })
-  .strict();
-
-export const AgentEntrySchema = z
-  .object({
-    id: z.string(),
-    name: z.string().optional(),
-    description: z.string().optional(),
-    workspace: z.string().optional(),
-    cwd: z.string().optional(),
-    agentDir: z.string().optional(),
-    model: AgentModelSchema.optional(),
-    utilityModel: z.string().optional(),
-    models: AgentModelMapSchema.optional(),
-    modelPolicy: AgentModelPolicySchema.optional(),
-    thinkingDefault: z
-      .enum(["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max", "ultra"])
-      .optional(),
-    verboseDefault: z.enum(["off", "on", "full"]).optional(),
-    toolProgressDetail: z.enum(["explain", "raw"]).optional(),
-    reasoningDefault: z.enum(["on", "off", "stream"]).optional(),
-    fastModeDefault: z.union([z.boolean(), z.literal("auto")]).optional(),
-    contextInjection: z
-      .union([z.literal("always"), z.literal("continuation-skip"), z.literal("never")])
-      .optional(),
-    bootstrapMaxChars: z.number().int().positive().optional(),
-    bootstrapTotalMaxChars: z.number().int().positive().optional(),
-    experimental: z
-      .object({
-        localModelLean: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
-    skills: z.array(z.string()).optional(),
-    memory: z
-      .object({
-        search: MemorySearchSchema,
-      })
-      .strict()
-      .optional(),
-    humanDelay: HumanDelaySchema.optional(),
-    typingMode: TypingModeSchema.optional(),
-    tts: AgentTtsConfigSchema,
-    skillsLimits: AgentSkillsLimitsSchema,
-    contextLimits: AgentContextLimitsSchema,
-    heartbeat: HeartbeatSchema,
-    identity: IdentitySchema,
-    groupChat: GroupChatSchema.unwrap().omit({ visibleReplies: true }).optional(),
-    subagents: z
-      .object({
-        delegationMode: z.enum(["suggest", "prefer"]).optional(),
-        allowAgents: z.array(z.string()).optional(),
-        model: AgentModelSchema.optional(),
-        thinking: z.string().optional(),
-        requireAgentId: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
-    embeddedAgent: AgentEntryEmbeddedAgentConfigSchema.optional(),
-    sandbox: AgentSandboxSchema,
-    params: z.record(z.string(), z.unknown()).optional(),
-    tools: AgentToolsSchema,
-    runtime: AgentRuntimeSchema,
-  })
-  .strict();
+export const AgentEntrySchema = AgentEntryBaseSchema.extend({
+  memory: z
+    .object({
+      search: MemorySearchSchema,
+    })
+    .strict()
+    .optional(),
+  humanDelay: HumanDelaySchema.optional(),
+  typingMode: TypingModeSchema.optional(),
+  tts: AgentTtsConfigSchema,
+  skillsLimits: AgentSkillsLimitsSchema,
+  contextLimits: AgentContextLimitsSchema,
+  heartbeat: HeartbeatSchema,
+  identity: IdentitySchema,
+  groupChat: GroupChatSchema.unwrap().omit({ visibleReplies: true }).optional(),
+  sandbox: AgentSandboxSchema,
+  tools: AgentToolsSchema,
+}).strict();
 
 export const ToolsSchema = z
   .object({
@@ -908,4 +706,3 @@ export const ToolsSchema = z
     );
   })
   .optional();
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

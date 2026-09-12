@@ -50,7 +50,7 @@ const SIDEBAR_VISIBLE_CHILD_SESSION_LIMIT = 4;
 
 export interface SessionListHost {
   readonly basePath: string;
-  readonly sessionDataContext: Pick<ApplicationContext, "gateway"> | undefined;
+  readonly sessionDataContext: Pick<ApplicationContext, "gateway" | "agentSelection"> | undefined;
   readonly sidebarLiveActivity: boolean;
   readonly sessionsShowPreview: boolean;
   readonly sidebarNarrationLines: ReadonlyMap<string, string>;
@@ -396,6 +396,7 @@ export function renderRecentSession(params: {
                 placementState: session.placementState,
                 placementProviderId: session.placementProviderId,
                 placementProfileId: session.placementProfileId,
+                placementMachine: session.placementMachine,
                 diskSpaceStatus: session.diskSpaceStatus,
                 workspaceConflictCount: session.workspaceConflictCount,
                 outboxAttentionCount: session.outboxAttentionCount,

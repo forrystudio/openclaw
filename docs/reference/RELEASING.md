@@ -51,8 +51,9 @@ Tideclaw alpha builds are a separate internal prerelease track (npm dist-tag `al
 For completed month `YYYY.M`, create `extended-stable/YYYY.M.33` and publish
 `.33+` from that branch. Tag, branch, checkout, package version, preflight, and
 validation must identify one commit. Before `.33`, protected `main` must contain
-a later month's final version below patch `33`; later maintenance patches remain
-eligible.
+a final version below patch `33` exactly one calendar month later, making the
+release the trailing completed month. Maintenance patches remain eligible only
+while that holds; the older line retires when `main` advances another month.
 
 ### Prepare and stabilize the candidate
 
@@ -73,7 +74,9 @@ move regular aliases. Run focused checks.
 
 Freeze the full branch-tip SHA and record the exact trusted-main Tooling SHA.
 Before tagging, run Full Release Validation through its immutable workflow
-transport; it also prepares and qualifies the exact npm and Docker bytes:
+transport; it also prepares and qualifies the exact npm and Docker bytes.
+`pnpm ci:full-release` runs `scripts/full-release-validation-at-sha.mjs`; this
+page uses the `pnpm` form throughout.
 
 ```bash
 VALIDATION_SHA="<exact-candidate-sha>"
@@ -251,13 +254,24 @@ website, and private dist-tags; do not run those steps for this Gateway path.
 
 This checklist is the public shape of the release flow. Private credentials and service-specific signing, notarization, dist-tag recovery, and emergency rollback procedures stay in the maintainer-only release runbook.
 
+`pnpm release:candidate` rejects fresh extended-stable launches, whether selected
+with `--npm-dist-tag extended-stable` or inferred from a final `.33+` version.
+Monthly correction suffixes are invalid; use a new monthly maintenance patch.
+Follow [Monthly Gateway extended-stable publication](/reference/RELEASING#monthly-gateway-extended-stable-publication):
+Full Release Validation, then the separate plugin npm and core npm publication owners.
+The guard runs after trusted tooling, candidate/tag, optional artifact, and saved-state
+checks, but before state writes, generated checks, plugin plans, or validation dispatch.
+An npm preflight run alone does not make a launch a resumed full-validation run.
+Explicit or restored full-validation run IDs and `--skip-dispatch` retain their
+existing recovery behavior; they do not certify monthly publication through this helper.
+
 An explicit stable or full release request includes macOS publication unless the operator limits its scope. That authorization carries through macOS validation, signing, notarization, promotion, and verification without a separate macOS consent step. Follow the current owner-configured environment policy and retain all enforced rules and exact-source artifact checks.
 
 For beta, stable, and full profiles, Linux (`ubuntu`) cross-OS lanes gate npm publication. Windows and macOS cross-OS lanes run in parallel as advisory coverage; their failures remain visible under **advisory** in `release-ci-summary` and in the evidence manifest without blocking Release Decision or `pnpm release:candidate`. Selected lanes still finish for terminal evidence. npm qualification, Docker, Package Acceptance, normal CI, and the profile's performance and soak gates remain required. macOS app signing/notarization/appcast and Windows Hub asset promotion run in parallel with or after npm publication and never delay it; verify platform readiness separately.
 
 1. Start from current `main`: pull latest, confirm the target commit is pushed, and confirm `main` CI is green enough to branch from.
 2. Create `release/YYYY.M.PATCH` from that commit. Backports are optional; apply only the operator-selected set. Bump every required version location, run `pnpm release:prep`, finish release fixes and required forward-ports, and review `src/plugins/compat/registry.ts` plus `src/commands/doctor/shared/deprecation-compat.ts`.
-3. Prepare the complete history manifest and release notes, then freeze the product-complete commit and target context as the **Code SHA/ref**, and record the trusted **Tooling SHA/ref**. Run the deterministic source preflight, then use `node scripts/full-release-validation-at-sha.mjs --sha <code-sha> --target-ref release/YYYY.M.PATCH --workflow-sha <tooling-sha>`. Reuse those exact identities for later release validation; never refresh the tooling from moving `main`. Beta-publish uses `release_profile=beta` without soak; postpublish-confidence owns broad live, QA-live, mobile, and Parallels work.
+3. Prepare the complete history manifest and release notes, then freeze the product-complete commit and target context as the **Code SHA/ref**, and record the trusted **Tooling SHA/ref**. Run the deterministic source preflight, then use `pnpm ci:full-release --sha <code-sha> --target-ref release/YYYY.M.PATCH --workflow-sha <tooling-sha>`. Reuse those exact identities for later release validation; never refresh the tooling from moving `main`. Beta-publish uses `release_profile=beta` without soak; postpublish-confidence owns broad live, QA-live, mobile, and Parallels work.
 4. Classify failures before editing as product, harness/tooling/provenance, infrastructure/credential, or wrapper. Only confirmed product failure creates a new Code SHA. Use one diagnosis, one fix when needed, and one narrow retry, then reassess.
 5. Keep the top `CHANGELOG.md` section complete, user-facing and deduplicated, covering merged PRs and direct commits since the last reachable shipped tag. The full manifest and editorial pass may overlap Code validation. When a divergent shipped tag or later forward-port re-associates already-released PRs, pass it explicitly as `--shipped-ref`. A contribution-record target may be an ancestor of the final target; include later fixes honestly rather than inventing a self-referential SHA.
 6. If the qualified Code SHA already contains fully final notes, use that same commit as **Release SHA**. One successful fresh full qualification can supply both lifecycle roles and their exact publication bytes; do not create another commit or run solely to separate the labels. If notes change after qualification, commit only `CHANGELOG.md` as a new Release SHA. Any other changed path returns the release to step 2.
@@ -344,6 +358,15 @@ the inventory must not accumulate indefinitely. A release with no post-swap
 imports still has an entry with an empty chunk list, so coverage is explicit.
 Conflicting origins for the same chunk export across releases fail generation.
 
+The recorder corrects one verified historical bundler annotation: the 2026.9.1,
+2026.9.2, and 2026.9.3 registry-lifecycle chunks grouped the retirement function
+under the cache module's source region. The correction requires the exact release
+version, build identity, commit, npm integrity, chunk and export. It changes only
+recorded source provenance; missing or ambiguous current exports still fail the
+build. Remove each correction when its release leaves the supported upgrade
+window. Regenerate the inventory from verified tarballs rather than editing its
+origins by hand.
+
 `pnpm update:compat:check` reads `npm view openclaw dist-tags --json` and requires
 the versions tagged `latest` and `beta` to be present, even when both tags refer
 to stable versions or the same version. A missing version fails with the exact
@@ -357,7 +380,10 @@ The recorder scans emitted lazy imports in the updater, service, and CLI cleanup
 regions and records required export origins. The wizard entry is excluded
 because it starts before replacement. `runtime-postbuild` generates hashed
 compatibility files by re-exporting the candidate's corresponding symbols;
-missing or ambiguous mappings fail the build. Stable entrypoints are checked
+multiple exports of one declaration resolve to its own chunk, with sorted paths
+and export names breaking alias ties. Missing mappings or distinct declaration
+bindings for the same source origin fail the build. The isolated `config-doctor`
+graph cannot supply updater bridges. Stable entrypoints are checked
 without replacement. The package carries the inventory in
 `dist/update-compat-inventory.json`, so negative and future fixtures remove that
 candidate's bridges. Existing older compatibility aliases remain separately
@@ -418,7 +444,7 @@ design approval and package-manager integration proof before implementation.
 
   ```bash
   TOOLING_SHA="<recorded-full-main-ancestor-sha>"
-  node scripts/full-release-validation-at-sha.mjs \
+  pnpm ci:full-release \
     --sha <code-sha> \
     --target-ref release/YYYY.M.PATCH \
     --workflow-sha "$TOOLING_SHA"
@@ -1124,7 +1150,7 @@ SHA-256, and npm integrity. A mismatch requires a new package version.
 - `release_publish_run_id`: approved `OpenClaw Release Publish` run id; required when this workflow is dispatched by that parent (bot-actor real-publish calls)
 - `plugin_npm_run_id`: successful exact-head `Plugin NPM Release` run id; required for a real `extended-stable` core publish
 - `npm_dist_tag`: npm target tag for the publish path; accepts `alpha`, `beta`, `latest`, or `extended-stable` and defaults to `beta`. Final patch `33` and later must use `extended-stable`; by default, `extended-stable` rejects earlier patches, and it always rejects non-final tags.
-- `bypass_extended_stable_guard`: testing-only boolean, default `false`; with `npm_dist_tag=extended-stable`, bypasses monthly extended-stable eligibility while preserving release identity, artifact, approval, and readback checks.
+- `bypass_extended_stable_guard`: testing-only boolean, default `false`; with `npm_dist_tag=extended-stable`, bypasses monthly extended-stable eligibility, including the trailing-completed-month rule, while preserving release identity, artifact, approval, and readback checks.
 
 `Plugin NPM Release` accepts `npm_dist_tag=default` for existing release
 behavior or `npm_dist_tag=extended-stable` for the guarded monthly path. The

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { SessionPlacementMachine } from "../../../packages/gateway-protocol/src/index.js";
 import type { DevicePlacementRequirement } from "../../agents/harness/types.js";
 import type {
   WorkerDesktopApp,
@@ -71,6 +72,8 @@ export type WorkerEnvironmentServiceContract = {
   list(): WorkerEnvironmentServiceRecord[];
   get(environmentId: string): WorkerEnvironmentServiceRecord | undefined;
   inventoryVersion(): number;
+  readMachineShape(environmentId: string): SessionPlacementMachine | undefined;
+  machineShapeVersion(): number;
   supportsExecutionMode(profileId: string, mode: WorkerPlacementExecutionMode): boolean;
   listMachineOptions(profileId: string): Promise<readonly WorkerMachineOption[] | undefined>;
   listOperatingSystems(profileId: string): Promise<readonly WorkerOperatingSystem[] | undefined>;
@@ -159,6 +162,15 @@ export type WorkerPlacementMoveRequest = WorkerPlacementReclaimRequest & {
 /** Closure-bound request authority; in-process only and never part of durable placement intent. */
 export type WorkerPlacementAuthorization = () => void;
 
+export type WorkerPlacementCancellationTarget = Readonly<
+  Pick<WorkerSessionPlacementRecord, "state" | "generation" | "environmentId" | "activeOwnerEpoch">
+>;
+
+/** Exact source eligibility may follow only transitions published by captured predecessors. */
+export type WorkerPlacementReclaimSourceCheck = (
+  predecessor?: WorkerPlacementCancellationTarget,
+) => void;
+
 // Leaf dispatch contract: GatewayRequestContext must not import the dispatch
 // runtime (it reaches agents/plugins and closes an import cycle through core).
 export type WorkerPlacementDispatchContract = {
@@ -175,7 +187,7 @@ export type WorkerPlacementDispatchContract = {
   reclaim?(
     request: WorkerPlacementReclaimRequest,
     authorize?: WorkerPlacementAuthorization,
-    beforeDrain?: WorkerPlacementAuthorization,
+    beforeDrain?: WorkerPlacementReclaimSourceCheck,
   ): Promise<Extract<WorkerSessionPlacementRecord, { state: "local" | "reclaimed" }>>;
   forceDestroyEnvironment?(
     environmentId: string,
