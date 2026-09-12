@@ -4,28 +4,28 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Type } from "typebox";
 import { afterEach, expect, it } from "vitest";
-import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import {
   loadTranscriptEventsSync,
   upsertSessionEntryCore,
-} from "../config/sessions/session-accessor.js";
-import { registerSecretValueForRedaction } from "../logging/secret-redaction-registry.js";
-import { resetSecretRedactionRegistryForTest } from "../logging/secret-redaction-registry.test-support.js";
-import { closeOpenClawAgentDatabases } from "../state/openclaw-agent-db.js";
-import { withEnvAsync } from "../test-utils/env.js";
-import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.js";
-import { extractToolResultText, sanitizeToolResult } from "./embedded-agent-tool-results.js";
-import { isLiveTestEnabled } from "./live-test-config.js";
-import { installSessionToolResultGuard } from "./session-tool-result-guard.js";
-import type { AgentSession } from "./sessions/agent-session.js";
-import { AuthStorage } from "./sessions/auth-storage.js";
-import type { ToolDefinition } from "./sessions/extensions/types.js";
-import { ModelRegistry } from "./sessions/model-registry.js";
-import { DefaultResourceLoader } from "./sessions/resource-loader.js";
-import { createAgentSession } from "./sessions/sdk.js";
-import { SessionManager } from "./sessions/session-manager.js";
-import { SettingsManager } from "./sessions/settings-manager.js";
-import { redactTranscriptMessage } from "./transcript-redact.js";
+} from "../../config/sessions/session-accessor.js";
+import { registerSecretValueForRedaction } from "../../logging/secret-redaction-registry.js";
+import { resetSecretRedactionRegistryForTest } from "../../logging/secret-redaction-registry.test-support.js";
+import { closeOpenClawAgentDatabases } from "../../state/openclaw-agent-db.js";
+import { withEnvAsync } from "../../test-utils/env.js";
+import { cleanupSessionStateForTest } from "../../test-utils/session-state-cleanup.js";
+import { extractToolResultText, sanitizeToolResult } from "../embedded-agent-tool-results.js";
+import { isLiveTestEnabled } from "../live-test-config.js";
+import { installSessionToolResultGuard } from "../session-tool-result-guard.js";
+import { redactTranscriptMessage } from "../transcript-redact.js";
+import type { AgentSession } from "./agent-session.js";
+import { AuthStorage } from "./auth-storage.js";
+import type { ToolDefinition } from "./extensions/types.js";
+import { ModelRegistry } from "./model-registry.js";
+import { DefaultResourceLoader } from "./resource-loader.js";
+import { createAgentSession } from "./sdk.js";
+import { SessionManager } from "./session-manager.js";
+import { SettingsManager } from "./settings-manager.js";
 
 const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
 const live = isLiveTestEnabled() && Boolean(apiKey);

@@ -3,26 +3,26 @@ import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, expect, it, vi } from "vitest";
-import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import {
   loadTranscriptEventsSync,
   upsertSessionEntryCore,
-} from "../config/sessions/session-accessor.js";
-import * as loggingConfigModule from "../logging/config.js";
-import { redactSensitiveFieldValueWithConfig } from "../logging/redact.js";
-import { registerSecretValueForRedaction } from "../logging/secret-redaction-registry.js";
-import { resetSecretRedactionRegistryForTest } from "../logging/secret-redaction-registry.test-support.js";
+} from "../../config/sessions/session-accessor.js";
+import * as loggingConfigModule from "../../logging/config.js";
+import { redactSensitiveFieldValueWithConfig } from "../../logging/redact.js";
+import { registerSecretValueForRedaction } from "../../logging/secret-redaction-registry.js";
+import { resetSecretRedactionRegistryForTest } from "../../logging/secret-redaction-registry.test-support.js";
 import {
   closeOpenClawAgentDatabases,
   closeOpenClawAgentDatabasesForTest,
-} from "../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
-import { withEnvAsync } from "../test-utils/env.js";
-import { extractToolResultText, sanitizeToolResult } from "./embedded-agent-tool-results.js";
-import { installSessionToolResultGuard } from "./session-tool-result-guard.js";
-import { SessionManager } from "./sessions/session-manager.js";
-import { makeAgentAssistantMessage } from "./test-helpers/agent-message-fixtures.js";
-import { redactTranscriptMessage } from "./transcript-redact.js";
+} from "../../state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import { withEnvAsync } from "../../test-utils/env.js";
+import { extractToolResultText, sanitizeToolResult } from "../embedded-agent-tool-results.js";
+import { installSessionToolResultGuard } from "../session-tool-result-guard.js";
+import { makeAgentAssistantMessage } from "../test-helpers/agent-message-fixtures.js";
+import { redactTranscriptMessage } from "../transcript-redact.js";
+import { SessionManager } from "./session-manager.js";
 
 const tempDirs = createTempDirTracker();
 afterEach(() => {
