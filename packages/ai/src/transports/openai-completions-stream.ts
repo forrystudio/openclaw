@@ -100,6 +100,20 @@ function extractToolCallThoughtSignature(toolCall: unknown): string | undefined 
   );
 }
 
+/** Classify raw provider progress before tool buffering or reasoning display filtering. */
+export function hasOpenAICompletionsChunkProgress(
+  chunk: OpenAICompatibleChatCompletionChunk,
+): boolean {
+  const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined;
+  const usage = chunk.usage || choice?.usage;
+  const delta = choice?.delta ?? choice?.message;
+  return Boolean(
+    usage ||
+    choice?.finish_reason ||
+    (delta && (delta.tool_calls?.length || hasOpenAICompletionsDeltaContent(delta))),
+  );
+}
+
 export async function processCompletionsStream(
   responseStream: AsyncIterable<ChatCompletionChunk>,
   output: MutableAssistantOutput,
@@ -421,16 +435,7 @@ export async function processCompletionsStream(
       });
     }
     const rawChoiceDelta = choice?.delta ?? choice?.message;
-    // Classify before legacy-tool buffering and hidden-reasoning display filtering.
-    notifyLlmRequestActivity(
-      options?.signal,
-      Boolean(
-        usage ||
-        choice?.finish_reason ||
-        (rawChoiceDelta &&
-          (rawChoiceDelta.tool_calls?.length || hasOpenAICompletionsDeltaContent(rawChoiceDelta))),
-      ),
-    );
+    notifyLlmRequestActivity(options?.signal, hasOpenAICompletionsChunkProgress(chunk));
     if (!choice) {
       emitReasoningUsageActivity(hasReasoningUsageActivity);
       continue;

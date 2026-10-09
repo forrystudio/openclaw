@@ -77,7 +77,7 @@ function isKnownOpenAICompletionsEndpoint(model: Pick<Model, "baseUrl">): boolea
 
 function resolveOpenAICompletionsMaxTokens(
   model: OpenAIModeModel,
-  options: OpenAICompletionsOptions | undefined,
+  options: Pick<OpenAICompletionsOptions, "maxTokens"> | undefined,
 ): { maxTokens: number | undefined; clampToModelMaxTokens: boolean } {
   if (options?.maxTokens) {
     return { maxTokens: options.maxTokens, clampToModelMaxTokens: true };
@@ -94,6 +94,15 @@ function resolveOpenAICompletionsMaxTokens(
 function resolveOpenAICompletionsModelMaxTokens(model: OpenAIModeModel): number | undefined {
   const maxTokens = asPositiveFiniteNumber(model.maxTokens);
   return maxTokens === undefined ? undefined : Math.floor(maxTokens);
+}
+
+function resolveOpenAICompletionsEffectiveContextTokens(
+  model: OpenAIModeModel,
+): number | undefined {
+  return (
+    asPositiveFiniteNumber((model as { contextTokens?: number }).contextTokens) ??
+    asPositiveFiniteNumber(model.contextWindow)
+  );
 }
 
 const OPENAI_COMPLETIONS_INPUT_TOKEN_SAFETY_MARGIN = 1.25;
@@ -116,7 +125,7 @@ function estimateJsonChars(value: unknown, fallback: number): number {
 // replay turns are reflected in the output cap.
 function estimateOpenAICompletionsInputTokens(payload: {
   messages: unknown[];
-  tools?: CompletionsRequest["tools"];
+  tools?: unknown[];
   response_format?: unknown;
 }): number {
   let adjustedChars = 0;
@@ -175,6 +184,51 @@ function estimateOpenAICompletionsContentChars(value: unknown): number {
     adjustedChars += estimateJsonChars(block, 256);
   }
   return adjustedChars;
+}
+
+/** Identify an automatic context cap without changing the final hook-shaped payload. */
+export function resolveOpenAICompletionsContextBudgetLimit(
+  model: OpenAIModeModel,
+  params: Record<string, unknown>,
+  options: Pick<OpenAICompletionsOptions, "maxTokens"> | undefined,
+): number | undefined {
+  const messages = params.messages;
+  const tools = params.tools;
+  if (!Array.isArray(messages) || (tools !== undefined && !Array.isArray(tools))) {
+    return undefined;
+  }
+  const caps = [params.max_tokens, params.max_completion_tokens].filter(
+    (value) => value !== undefined,
+  );
+  const cap = caps[0];
+  if (
+    typeof cap !== "number" ||
+    !Number.isSafeInteger(cap) ||
+    cap < 1 ||
+    caps.some((value) => value !== cap)
+  ) {
+    return undefined;
+  }
+  const budget = resolveOpenAICompletionsMaxTokens(model, options);
+  const modelMaxTokens = resolveOpenAICompletionsModelMaxTokens(model);
+  if (
+    budget.maxTokens === undefined ||
+    !(budget.maxTokens > cap) ||
+    (budget.clampToModelMaxTokens && modelMaxTokens !== undefined && modelMaxTokens <= cap) ||
+    !detectOpenAICompletionsCompat(model).capabilities.usesExplicitProxyLikeEndpoint
+  ) {
+    return undefined;
+  }
+  const contextTokens = resolveOpenAICompletionsEffectiveContextTokens(model);
+  if (contextTokens === undefined) {
+    return undefined;
+  }
+  const estimatedInputTokens = estimateOpenAICompletionsInputTokens({
+    messages,
+    tools,
+    response_format: params.response_format,
+  });
+  return Math.max(1, contextTokens - estimatedInputTokens - 1) === cap ? cap : undefined;
 }
 
 function convertTools(
@@ -429,9 +483,7 @@ export function buildOpenAICompletionsRequest(
         ? { maxTokens: options?.maxTokens, clampToModelMaxTokens: true }
         : resolveOpenAICompletionsMaxTokens(model, options);
     const effectiveMaxTokens = maxTokenBudget.maxTokens;
-    const effectiveContextTokens =
-      asPositiveFiniteNumber((model as { contextTokens?: number }).contextTokens) ??
-      asPositiveFiniteNumber(model.contextWindow);
+    const effectiveContextTokens = resolveOpenAICompletionsEffectiveContextTokens(model);
     let clampedMaxTokens = effectiveMaxTokens;
     const modelMaxTokens = resolveOpenAICompletionsModelMaxTokens(model);
     if (

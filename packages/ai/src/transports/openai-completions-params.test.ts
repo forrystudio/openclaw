@@ -4,7 +4,10 @@ import type { OpenAICompletionsOptions } from "../provider-options.js";
 import { FAILED_ASSISTANT_REPLAY_TEXT } from "../replay-turn-classification.js";
 import type { Context, Model, Tool } from "../types.js";
 import { createZeroUsage } from "../usage.test-support.js";
-import { buildOpenAICompletionsParams } from "./openai-completions-params.js";
+import {
+  buildOpenAICompletionsParams,
+  resolveOpenAICompletionsContextBudgetLimit,
+} from "./openai-completions-params.js";
 import { makeCompletionsModel } from "./openai-completions.test-support.js";
 import { buildOpenAIResponsesParams } from "./openai-responses-params-internal.js";
 import type { OpenAIModeModel } from "./openai-transport-shared.js";
@@ -36,6 +39,39 @@ function request(
 }
 
 describe("OpenAI completions output budgets", () => {
+  it("disables recovery for unclassifiable or changed hook payloads", () => {
+    const model = makeCompletionsModel({ ...proxy, contextWindow: 10_122, maxTokens: 4096 });
+    const params = buildOpenAICompletionsParams(
+      model,
+      {
+        messages: [{ role: "user", content: "x".repeat(32_000), timestamp: 1 }],
+      },
+      undefined,
+    );
+    expect(resolveOpenAICompletionsContextBudgetLimit(model, params, undefined)).toBe(121);
+    for (const override of [
+      { messages: {} },
+      { tools: {} },
+      { messages: [{ role: "user", content: "short" }] },
+      { tools: [{ description: "x".repeat(1000) }] },
+      { response_format: { type: "json_schema", json_schema: { description: "x".repeat(1000) } } },
+    ]) {
+      expect(
+        resolveOpenAICompletionsContextBudgetLimit(model, { ...params, ...override }, undefined),
+      ).toBeUndefined();
+    }
+  });
+  it.each([1, 15])(
+    "preserves an explicitly requested %i-token output when input fits",
+    (maxTokens) => {
+      const params = buildOpenAICompletionsParams(
+        makeCompletionsModel({ provider: "vllm", baseUrl: "http://localhost:8000/v1" }),
+        emptyContext(),
+        { maxTokens },
+      );
+      expect(params.max_completion_tokens).toBe(maxTokens);
+    },
+  );
   it("resolves runtime, model, and context caps without changing the output field", () => {
     const uncapped = makeCompletionsModel({
       id: "mimo-v2.5-pro",

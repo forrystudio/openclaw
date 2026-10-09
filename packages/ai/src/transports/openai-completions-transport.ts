@@ -29,6 +29,7 @@ import {
   createFirstStreamEventAbortController,
   getFirstStreamEventTimeoutHandler,
   getFirstStreamEventTimeoutMs,
+  withFirstStreamEventTimeout,
 } from "../utils/stream-first-event-timeout.js";
 import { createAssistantOutput } from "./assistant-output.js";
 import { buildGuardedModelFetch } from "./host-policy.js";
@@ -38,9 +39,14 @@ import {
   isNativeOpenAIEndpoint,
   resolveOpenAICompletionsCompat,
 } from "./openai-completions-compat.js";
+import { bufferContextLimitedCompletions } from "./openai-completions-context-budget-buffer.js";
 import { isAzureOpenAICompatibleHost } from "./openai-completions-host.js";
-import { buildOpenAICompletionsRequest } from "./openai-completions-params.js";
 import {
+  buildOpenAICompletionsRequest,
+  resolveOpenAICompletionsContextBudgetLimit,
+} from "./openai-completions-params.js";
+import {
+  hasOpenAICompletionsChunkProgress,
   processCompletionsStream,
   shouldEmitOpenAICompletionsReasoning,
 } from "./openai-completions-stream.js";
@@ -94,6 +100,8 @@ function assertOpenAICompletionsPayloadHasConversationTurn(
 
 const SSE_DONE_LINE_RE = /^data:[ \t]*\[DONE\][ \t]*$/i;
 const SSE_DONE_MAX_LINE_CHARS = 1_024;
+const CONTEXT_LIMITED_RESPONSE_MAX_BUFFERED_EVENTS = 256;
+const CONTEXT_LIMITED_RESPONSE_MAX_BUFFERED_CHARS = 262_144;
 
 function createSseDoneDetector() {
   const decoder = new TextDecoder();
@@ -310,6 +318,8 @@ export function streamOpenAICompletionsRequest(
     const output: MutableAssistantOutput = createAssistantOutput(model);
     const provisionalCommentaryTags: PendingCommentaryTags = new Map();
     let firstEventAbort: ReturnType<typeof createFirstStreamEventAbortController> | undefined;
+    let bufferedEvents: AssistantMessageEvent[] | undefined;
+    let discardCandidateEvents = false;
     try {
       const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
       const directEmitReasoning = Boolean(
@@ -338,6 +348,11 @@ export function streamOpenAICompletionsRequest(
             }
           : createManagedCompletionsClient(model, context, options, apiKey, cacheRetention);
       let params = buildOpenAICompletionsRequest(model, context, options, policy);
+      // Hook-created limits must not acquire automatic context-recovery provenance.
+      const originalContextBudgetLimit =
+        mode === "managed"
+          ? resolveOpenAICompletionsContextBudgetLimit(model, params, options)
+          : undefined;
       const encodeBody = prepareModelRequestBody(options);
       const nextParams = await options?.onPayload?.(params, model);
       if (nextParams !== undefined) {
@@ -361,6 +376,49 @@ export function streamOpenAICompletionsRequest(
           assertOpenAICompletionsPayloadHasConversationTurn(params, model);
         }
       }
+      const contextBudgetLimited =
+        originalContextBudgetLimit !== undefined &&
+        resolveOpenAICompletionsContextBudgetLimit(model, params, options) ===
+          originalContextBudgetLimit;
+      let bufferedChars = 0;
+      const pendingEvents: AssistantMessageEvent[] | undefined = contextBudgetLimited
+        ? []
+        : undefined;
+      bufferedEvents = pendingEvents;
+      // Withhold candidate tools and text until recovery is ruled out. Snapshot
+      // start too: its partial points at the mutable assistant output.
+      const responseEvents = pendingEvents
+        ? {
+            push(event: AssistantMessageEvent) {
+              if (discardCandidateEvents) {
+                return;
+              }
+              options?.signal?.throwIfAborted();
+              if (!bufferedEvents) {
+                stream.push(event);
+                return;
+              }
+              const eventChars = JSON.stringify(event).length;
+              if (
+                pendingEvents.length >= CONTEXT_LIMITED_RESPONSE_MAX_BUFFERED_EVENTS ||
+                bufferedChars + eventChars > CONTEXT_LIMITED_RESPONSE_MAX_BUFFERED_CHARS
+              ) {
+                // Known rejected raw responses use the sink before this bound.
+                // Successful and over-bound responses retain ordinary streaming.
+                bufferedEvents = undefined;
+                for (const pendingEvent of pendingEvents) {
+                  stream.push(pendingEvent);
+                }
+                pendingEvents.length = 0;
+                bufferedChars = 0;
+                stream.push(event);
+                return;
+              }
+              bufferedChars += eventChars;
+              pendingEvents.push(structuredClone(event));
+            },
+          }
+        : stream;
       const emitReasoning =
         mode === "direct"
           ? directEmitReasoning
@@ -391,16 +449,46 @@ export function streamOpenAICompletionsRequest(
         signal: firstEventAbort.signal,
         abort: firstEventAbort.abort,
         hook: createOpenAIProviderAcceptanceHook(options, response, model),
-        onReady: () => stream.push({ type: "start", partial: output }),
+        onReady: () => responseEvents.push({ type: "start", partial: output }),
       });
+      let reducerStream = hookedResponseStream;
+      let budgetRecoveryAllowed = contextBudgetLimited;
+      if (contextBudgetLimited) {
+        const buffered = await bufferContextLimitedCompletions(
+          withFirstStreamEventTimeout(hookedResponseStream, {
+            provider: model.provider,
+            api: model.api,
+            model: model.id,
+            timeoutMs: getFirstStreamEventTimeoutMs(options) ?? 0,
+            stage: "completions",
+            abort: firstEventAbort.abort,
+            onTimeout: getFirstStreamEventTimeoutHandler(options),
+          }),
+          {
+            signal: options?.signal,
+            onChunk: (chunk) =>
+              notifyLlmRequestActivity(options?.signal, hasOpenAICompletionsChunkProgress(chunk)),
+          },
+        );
+        reducerStream = buffered.stream;
+        budgetRecoveryAllowed = buffered.bounded;
+        discardCandidateEvents =
+          buffered.bounded &&
+          (buffered.failed ||
+            buffered.finishReason === "length" ||
+            options?.signal?.aborted === true);
+        if (discardCandidateEvents && pendingEvents) {
+          pendingEvents.length = 0;
+        }
+      }
       const directEvents =
         mode === "direct" ? createDirectCompletionsEventStream(output, stream) : undefined;
       try {
         await processCompletionsStream(
-          hookedResponseStream,
+          reducerStream,
           output,
           model,
-          directEvents?.stream ?? stream,
+          directEvents?.stream ?? responseEvents,
           {
             ...(directEvents
               ? {
@@ -409,10 +497,12 @@ export function streamOpenAICompletionsRequest(
                   provisionalCommentaryTags,
                 }
               : { mode: "managed" as const }),
-            signal: options?.signal,
+            // Reduce rejected local prefixes even after cancellation to retain
+            // provider usage; their events cannot admit candidate tools.
+            signal: discardCandidateEvents ? undefined : options?.signal,
             emitReasoning,
             strictReasoningTags: reasoningTagTextPolicy.isStrict(options),
-            firstEventTimeoutMs: getFirstStreamEventTimeoutMs(options),
+            firstEventTimeoutMs: contextBudgetLimited ? 0 : getFirstStreamEventTimeoutMs(options),
             abortFirstEventStream: firstEventAbort.abort,
             onFirstEventTimeout: getFirstStreamEventTimeoutHandler(options),
             sawStreamDONE,
@@ -436,8 +526,28 @@ export function streamOpenAICompletionsRequest(
         throw error;
       }
       directEvents?.finish(output.stopReason === "toolUse");
+      if (
+        bufferedEvents &&
+        !options?.signal?.aborted &&
+        output.stopReason !== "error" &&
+        output.stopReason !== "aborted"
+      ) {
+        if (budgetRecoveryAllowed && output.stopReason === "length") {
+          throw new Error(
+            `Context length exceeded: the provider reached the ${originalContextBudgetLimit}-token output limit imposed by the context budget. Compact the context and retry.`,
+          );
+        }
+        for (const event of bufferedEvents) {
+          stream.push(event);
+        }
+        bufferedEvents = undefined;
+      }
       finalizeTransportStream({ stream, output, signal: options?.signal });
     } catch (error) {
+      if (bufferedEvents || discardCandidateEvents) {
+        // Preserve usage and failure classification, never unpublished content.
+        output.content = [];
+      }
       failTransportStream({
         stream,
         output,
